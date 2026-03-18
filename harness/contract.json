@@ -1,0 +1,148 @@
+{
+  "version": "1",
+  "rolloutPolicy": {
+    "currentPhase": "phase-0",
+    "runFanoutOnGateFailure": false,
+    "phases": {
+      "phase-0": {
+        "description": "Advisory baseline — no blocking, observe only",
+        "enforceMergeBlock": false,
+        "enforceReviewState": false,
+        "enforceDocsDrift": false,
+        "enableRemediation": false,
+        "requireEvidence": false
+      },
+      "phase-1": {
+        "description": "Enforce merge block + review state",
+        "enforceMergeBlock": true,
+        "enforceReviewState": true,
+        "enforceDocsDrift": true,
+        "enableRemediation": false,
+        "requireEvidence": false
+      },
+      "phase-2": {
+        "description": "Full loop with remediation + evidence",
+        "enforceMergeBlock": true,
+        "enforceReviewState": true,
+        "enforceDocsDrift": true,
+        "enableRemediation": true,
+        "requireEvidence": true
+      }
+    }
+  },
+  "riskTierRules": {
+    "high": [
+      "lib/fac/tools/**",
+      "lib/fac_web/controllers/**",
+      "priv/repo/migrations/**",
+      "config/**"
+    ],
+    "medium": [
+      "lib/fac_web/**",
+      "lib/fac/**"
+    ],
+    "low": [
+      "**"
+    ]
+  },
+  "mergePolicy": {
+    "high": {
+      "requiredChecks": [
+        "risk-policy-gate",
+        "harness-smoke",
+        "coderabbit-review",
+        "ci-pipeline"
+      ]
+    },
+    "medium": {
+      "requiredChecks": [
+        "risk-policy-gate",
+        "coderabbit-review",
+        "ci-pipeline"
+      ]
+    },
+    "low": {
+      "requiredChecks": [
+        "risk-policy-gate",
+        "ci-pipeline"
+      ]
+    }
+  },
+  "reviewPolicy": {
+    "provider": "coderabbit",
+    "checkRunName": "coderabbit-review",
+    "timeoutMinutes": 15,
+    "weakConfidenceThreshold": 0.55,
+    "actionableSummaryKeywords": [
+      "vulnerability",
+      "security",
+      "exploit",
+      "auth bypass",
+      "injection",
+      "rce",
+      "critical"
+    ]
+  },
+  "reviewProviders": {
+    "providers": {
+      "coderabbit": {
+        "enforcement": "required",
+        "requireCurrentHeadIngestion": true,
+        "checkRunName": "coderabbit-review"
+      }
+    }
+  },
+  "docsDriftRules": [
+    {
+      "name": "api-docs-drift",
+      "whenTouched": [
+        "lib/fac_web/controllers/**",
+        "lib/fac_web/router.ex"
+      ],
+      "requireAny": [
+        "docs/**",
+        "README.md",
+        "ARCHITECTURE.md"
+      ]
+    }
+  ],
+  "evidencePolicy": {
+    "uiImpactPaths": [
+      "lib/fac_web/components/**",
+      "lib/fac_web/controllers/**/*.heex",
+      "assets/**"
+    ],
+    "requiredFlows": [
+      "app-launch",
+      "changed-feature-path"
+    ],
+    "requiredAssertions": []
+  },
+  "remediationPolicy": {
+    "maxAttemptsPerSha": 1,
+    "allowedPathGlobs": [
+      "lib/**/*.ex",
+      "test/**/*.exs",
+      "docs/**/*.md",
+      "scripts/**/*.py"
+    ],
+    "forbiddenPathGlobs": [
+      ".git/**",
+      ".github/**",
+      "_build/**",
+      "deps/**",
+      "harness/**"
+    ],
+    "validationCommands": [
+      "mix compile --warnings-as-errors",
+      "mix test"
+    ]
+  },
+  "rerunPolicy": {
+    "marker": "<!-- coderabbit-auto-rerun -->"
+  },
+  "sentryPolicy": {
+    "dsn": "https://29483990cf7114c250fd3da1a5ba81d2@o4510958533214208.ingest.us.sentry.io/4510958541668352",
+    "tokenEnv": "SENTRY_AUTH_TOKEN"
+  }
+}

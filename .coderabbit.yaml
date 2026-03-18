@@ -1,0 +1,30 @@
+language: en-US
+reviews:
+  profile: assertive
+  auto_review:
+    enabled: true
+    base_branches:
+      - main
+  path_instructions:
+    - path: "lib/fac_web/controllers/**"
+      instructions: |
+        Review controllers for security vulnerabilities: SQL injection, XSS,
+        mass assignment, missing authentication/authorization checks.
+        Flag any controller that modifies data without CSRF protection.
+    - path: "priv/repo/migrations/**"
+      instructions: |
+        Review migrations for: irreversible operations without explicit down/0,
+        missing indexes on foreign keys, potential data loss operations.
+        Flag ALTER TABLE operations that could lock tables for extended periods.
+    - path: "config/**"
+      instructions: |
+        Review for hardcoded secrets, insecure defaults, and missing
+        production-safety guards. Ensure sensitive values use environment variables.
+    - path: "lib/fac/harness/**"
+      instructions: |
+        These are harness engineering modules. Verify contract.json conformance,
+        correct risk tier classification, and evidence manifest validation.
+    - path: "scripts/harness/**"
+      instructions: |
+        Python harness scripts for CI. Verify deterministic behavior,
+        correct contract.json consumption, and proper error handling.
