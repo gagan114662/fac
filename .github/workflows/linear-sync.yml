@@ -1,0 +1,91 @@
+name: linear-sync
+
+on:
+  issues:
+    types: [opened, edited, closed, reopened, labeled]
+  pull_request:
+    types: [opened, closed]
+  schedule:
+    - cron: '*/30 * * * *'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync-issue-to-linear:
+    name: sync-issue-to-linear
+    if: ${{ github.event_name == 'issues' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Sync issue to Linear
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          python3 scripts/harness/linear_sync.py \
+            --mode github-to-linear \
+            --repo "${{ github.repository }}" \
+            --issue-number "${{ github.event.issue.number }}" \
+            --issue-title "${{ github.event.issue.title }}" \
+            --issue-body "${{ github.event.issue.body }}" \
+            --issue-state "${{ github.event.issue.state }}" \
+            --out artifacts/linear-sync.json
+
+  sync-pr-to-linear:
+    name: sync-pr-to-linear
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Sync PR to Linear
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          python3 scripts/harness/linear_sync.py \
+            --mode sync-status \
+            --repo "${{ github.repository }}" \
+            --pr-url "${{ github.event.pull_request.html_url }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --branch "${{ github.event.pull_request.head.ref }}" \
+            --out artifacts/linear-sync.json
+
+  poll-linear:
+    name: poll-linear
+    if: ${{ github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Poll Linear for new issues
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Scheduled Linear sync poll — checking for new issues to create in GitHub"
+          # Future: implement linear-to-github sync
+          echo "Linear sync poll complete"

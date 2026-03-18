@@ -1,0 +1,87 @@
+name: harness-smoke
+
+on:
+  workflow_run:
+    workflows: [risk-policy-gate]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  harness-smoke:
+    name: harness-smoke
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download risk policy artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: risk-policy-report
+          path: artifacts
+
+      - name: Check if harness-smoke is required
+        id: check
+        run: |
+          REPORT="artifacts/risk-policy-report.json"
+          test -f "$REPORT"
+
+          required_checks=$(jq -c '.required_checks' "$REPORT")
+          risk_tier=$(jq -r '.risk_tier' "$REPORT")
+          head_sha=$(jq -r '.head_sha' "$REPORT")
+
+          should_run="false"
+          if echo "$required_checks" | jq -e 'index("harness-smoke")' > /dev/null 2>&1; then
+            should_run="true"
+          fi
+
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "risk_tier=$risk_tier" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: ${{ steps.check.outputs.should_run == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.check.outputs.head_sha }}
+
+      - name: Set up Elixir
+        if: ${{ steps.check.outputs.should_run == 'true' }}
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16'
+          otp-version: '26'
+
+      - name: Install deps
+        if: ${{ steps.check.outputs.should_run == 'true' }}
+        run: mix deps.get
+
+      - name: Run harness tests
+        if: ${{ steps.check.outputs.should_run == 'true' }}
+        run: mix test test/harness/
+
+      - name: Validate contract schema
+        if: ${{ steps.check.outputs.should_run == 'true' }}
+        run: |
+          python3 -c "
+          import json, sys
+          with open('harness/contract.json') as f:
+              contract = json.load(f)
+          required_keys = ['version', 'rolloutPolicy', 'riskTierRules', 'mergePolicy', 'reviewPolicy']
+          missing = [k for k in required_keys if k not in contract]
+          if missing:
+              print(f'Missing required keys: {missing}', file=sys.stderr)
+              sys.exit(1)
+          print('Contract schema valid')
+          "
+
+      - name: Upload evidence manifest
+        if: ${{ steps.check.outputs.should_run == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-smoke-evidence
+          path: artifacts/
+          if-no-files-found: warn
