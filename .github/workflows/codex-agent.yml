@@ -41,9 +41,7 @@ jobs:
 
       - name: Run Codex
         run: |
-          codex exec \
-            --full-auto \
-            -q "Read AGENTS.md for project context and build commands.
+          codex exec --full-auto "Read AGENTS.md for project context and build commands.
 
           Fix issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
 
