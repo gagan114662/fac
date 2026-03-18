@@ -8,7 +8,6 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
-  id-token: write
 
 jobs:
   claude-agent:
@@ -18,6 +17,7 @@ jobs:
         (github.event.action == 'assigned' && github.event.assignee.login == 'claude')
       }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,23 +29,30 @@ jobs:
           git checkout -b "$BRANCH"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
-      - name: Run Claude Code
-        uses: anthropics/claude-code-action@v1
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: '--max-turns 20'
-          prompt: |
-            Read AGENTS.md for project context and build commands.
+          node-version: '22'
 
-            Fix issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
+      - name: Install Claude Code CLI
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          npm install -g @anthropic-ai/claude-code@latest
 
-            ${{ github.event.issue.body }}
+      - name: Run Claude Code
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          claude --print --max-turns 20 "Read AGENTS.md for project context and build commands.
 
-            When done, verify your changes:
-            1. mix compile --warnings-as-errors
-            2. mix test
-            3. mix credo --strict
-            4. mix format --check-formatted
+          Fix issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
+
+          ${{ github.event.issue.body }}
+
+          Write the code changes needed. Create any new files required.
+          Do NOT try to run mix commands - Elixir is not installed in this environment.
+          Focus on writing correct Elixir code based on the existing codebase patterns."
 
       - name: Push changes and open PR
         env:
