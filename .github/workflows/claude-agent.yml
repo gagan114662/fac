@@ -44,15 +44,17 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          claude --print --max-turns 20 "Read AGENTS.md for project context and build commands.
+          claude -p --dangerously-skip-permissions \
+            --max-budget-usd 5 \
+            "Read AGENTS.md for project context and build commands.
 
           Fix issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
 
           ${{ github.event.issue.body }}
 
-          Write the code changes needed. Create any new files required.
-          Do NOT try to run mix commands - Elixir is not installed in this environment.
-          Focus on writing correct Elixir code based on the existing codebase patterns."
+          Write the code changes directly to the filesystem.
+          Do NOT try to run mix commands - Elixir is not installed.
+          Focus on writing correct Elixir code based on existing patterns."
 
       - name: Push changes and open PR
         env:
