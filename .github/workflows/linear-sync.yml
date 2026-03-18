@@ -7,6 +7,12 @@ on:
     types: [opened, closed]
   schedule:
     - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Sync mode override'
+        required: false
+        default: 'linear-to-github'
 
 permissions:
   contents: read
@@ -66,11 +72,12 @@ jobs:
             --pr-url "${{ github.event.pull_request.html_url }}" \
             --head-sha "${{ github.event.pull_request.head.sha }}" \
             --branch "${{ github.event.pull_request.head.ref }}" \
+            --pr-merged "${{ github.event.pull_request.merged }}" \
             --out artifacts/linear-sync.json
 
   poll-linear:
     name: poll-linear
-    if: ${{ github.event_name == 'schedule' }}
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -86,6 +93,11 @@ jobs:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Scheduled Linear sync poll — checking for new issues to create in GitHub"
-          # Future: implement linear-to-github sync
-          echo "Linear sync poll complete"
+          mkdir -p artifacts
+          python3 scripts/harness/linear_sync.py \
+            --mode linear-to-github \
+            --repo "${{ github.repository }}" \
+            --agent-label "agent:codex" \
+            --out artifacts/linear-sync.json
+          echo "--- Sync result ---"
+          cat artifacts/linear-sync.json
