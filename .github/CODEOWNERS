@@ -1,0 +1,7 @@
+# High-risk paths require owner approval
+lib/fac/tools/          @gagan114662
+lib/fac_web/controllers/ @gagan114662
+priv/repo/migrations/   @gagan114662
+config/                 @gagan114662
+harness/contract.json   @gagan114662
+.github/workflows/      @gagan114662
