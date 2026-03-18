@@ -1,0 +1,88 @@
+name: risk-policy-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: risk-policy-gate-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  risk-policy-gate:
+    name: risk-policy-gate
+    runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.gate.outputs.decision }}
+      report_exit_code: ${{ steps.gate.outputs.exit_code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Detect changed files
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" > changed_files.txt
+          echo "Changed files:"
+          cat changed_files.txt
+
+      - name: Run risk policy gate
+        id: gate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          set +e
+          python3 scripts/harness/risk_policy_gate.py \
+            --pr "${{ github.event.pull_request.number }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --changed-files changed_files.txt \
+            --contract harness/contract.json \
+            --repo "${{ github.repository }}" \
+            --review-findings artifacts/review-findings.json \
+            --report-out artifacts/risk-policy-report.json
+          code=$?
+          set -e
+
+          decision=$(jq -r '.decision' artifacts/risk-policy-report.json)
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "decision=$decision" >> "$GITHUB_OUTPUT"
+
+      - name: Upload risk policy artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: risk-policy-report
+          path: |
+            artifacts/risk-policy-report.json
+            artifacts/review-findings.json
+          if-no-files-found: error
+
+      - name: Enforce gate status
+        if: always()
+        run: |
+          if [ "${{ steps.gate.outputs.exit_code }}" != "0" ]; then
+            echo "risk-policy-gate blocked by policy decision: ${{ steps.gate.outputs.decision }}"
+            exit 1
+          fi
+
+      - name: Gate summary
+        if: always()
+        run: |
+          echo "## Risk Policy Gate" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Decision: ${{ steps.gate.outputs.decision }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Report artifact: risk-policy-report" >> "$GITHUB_STEP_SUMMARY"

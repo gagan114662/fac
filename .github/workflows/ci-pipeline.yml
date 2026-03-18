@@ -1,0 +1,217 @@
+name: ci-pipeline
+
+on:
+  workflow_run:
+    workflows: [risk-policy-gate]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  MIX_ENV: test
+  ELIXIR_VERSION: '1.16'
+  OTP_VERSION: '26'
+
+jobs:
+  preflight:
+    name: preflight
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    outputs:
+      required_checks_json: ${{ steps.parse.outputs.required_checks_json }}
+      risk_tier: ${{ steps.parse.outputs.risk_tier }}
+      head_sha: ${{ steps.parse.outputs.head_sha }}
+      pr_number: ${{ steps.parse.outputs.pr_number }}
+      rollout_phase: ${{ steps.parse.outputs.rollout_phase }}
+      should_fanout: ${{ steps.parse.outputs.should_fanout }}
+    steps:
+      - name: Download risk policy artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: risk-policy-report
+          path: artifacts
+
+      - name: Parse gate report
+        id: parse
+        run: |
+          REPORT="artifacts/risk-policy-report.json"
+          test -f "$REPORT"
+
+          required_checks_json=$(jq -c '.required_checks' "$REPORT")
+          risk_tier=$(jq -r '.risk_tier' "$REPORT")
+          head_sha=$(jq -r '.head_sha' "$REPORT")
+          pr_number=$(jq -r '.pr_number' "$REPORT")
+          rollout_phase=$(jq -r '.rollout_phase // "phase-0"' "$REPORT")
+          run_fanout_on_failure=$(jq -r '.rollout.runFanoutOnGateFailure // false' "$REPORT")
+          gate_conclusion="${{ github.event.workflow_run.conclusion }}"
+
+          should_fanout="false"
+          if [ "$gate_conclusion" = "success" ]; then
+            should_fanout="true"
+          elif [ "$run_fanout_on_failure" = "true" ]; then
+            should_fanout="true"
+          fi
+
+          echo "required_checks_json=$required_checks_json" >> "$GITHUB_OUTPUT"
+          echo "risk_tier=$risk_tier" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "rollout_phase=$rollout_phase" >> "$GITHUB_OUTPUT"
+          echo "should_fanout=$should_fanout" >> "$GITHUB_OUTPUT"
+
+          echo "## CI Pipeline Preflight" >> "$GITHUB_STEP_SUMMARY"
+          echo "- PR: #$pr_number" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Risk tier: $risk_tier" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Rollout phase: $rollout_phase" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Fanout enabled: $should_fanout" >> "$GITHUB_STEP_SUMMARY"
+
+  ci-compile:
+    name: ci-compile
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && needs.preflight.outputs.should_fanout == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.head_sha }}
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: mix-${{ runner.os }}-
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+
+  ci-test:
+    name: ci-test
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && needs.preflight.outputs.should_fanout == 'true' }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fac_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: ecto://postgres:postgres@localhost/fac_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.head_sha }}
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: mix-${{ runner.os }}-
+      - run: mix deps.get
+      - run: mix ecto.create
+      - run: mix ecto.migrate
+      - run: mix test
+
+  ci-credo:
+    name: ci-credo
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && needs.preflight.outputs.should_fanout == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.head_sha }}
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: mix-${{ runner.os }}-
+      - run: mix deps.get
+      - run: mix credo --strict
+
+  ci-dialyzer:
+    name: ci-dialyzer
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && needs.preflight.outputs.should_fanout == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.head_sha }}
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+            priv/plts
+          key: dialyzer-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: dialyzer-${{ runner.os }}-
+      - run: mix deps.get
+      - run: mix dialyzer
+
+  ci-format:
+    name: ci-format
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && needs.preflight.outputs.should_fanout == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.head_sha }}
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - run: mix format --check-formatted
+
+  ci-secrets:
+    name: ci-secrets
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && needs.preflight.outputs.should_fanout == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.head_sha }}
+          fetch-depth: 0
+      - name: Install trufflehog
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+      - name: Scan for secrets
+        run: |
+          trufflehog filesystem . \
+            --no-update \
+            --fail \
+            --only-verified \
+            --exclude-paths=<(echo -e "_build/\n.git/\ndeps/\nmix.lock")

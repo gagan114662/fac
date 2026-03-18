@@ -35,3 +35,8 @@ fac-*.tar
 npm-debug.log
 /assets/node_modules/
 
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
