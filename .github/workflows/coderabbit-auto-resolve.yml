@@ -1,0 +1,94 @@
+name: coderabbit-auto-resolve
+
+on:
+  workflow_run:
+    workflows: [risk-policy-gate]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  auto-resolve:
+    name: coderabbit-auto-resolve
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download risk policy artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: risk-policy-report
+          path: artifacts
+
+      - name: Check if auto-resolve should run
+        id: check
+        run: |
+          REPORT="artifacts/risk-policy-report.json"
+          test -f "$REPORT"
+
+          decision=$(jq -r '.decision' "$REPORT")
+          review_status=$(jq -r '.review_state.status' "$REPORT")
+          pr_number=$(jq -r '.pr_number' "$REPORT")
+
+          should_resolve="false"
+          if [ "$decision" = "pass" ] && [ "$review_status" = "success" ]; then
+            should_resolve="true"
+          fi
+
+          echo "should_resolve=$should_resolve" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+
+      - name: Auto-resolve bot-only threads
+        if: ${{ steps.check.outputs.should_resolve == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.check.outputs.pr_number }}"
+          REPO="${{ github.repository }}"
+
+          # Get all review threads via GraphQL
+          QUERY='query($owner:String!,$name:String!,$pr:Int!){
+            repository(owner:$owner,name:$name){
+              pullRequest(number:$pr){
+                reviewThreads(first:100){
+                  nodes{
+                    id
+                    isResolved
+                    comments(first:50){
+                      nodes{
+                        author{login}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }'
+
+          OWNER=$(echo "$REPO" | cut -d/ -f1)
+          NAME=$(echo "$REPO" | cut -d/ -f2)
+
+          RESULT=$(gh api graphql -f query="$QUERY" \
+            -f owner="$OWNER" \
+            -f name="$NAME" \
+            -F pr="$PR_NUMBER" 2>/dev/null || echo '{}')
+
+          # Find unresolved threads where ALL comments are from coderabbitai[bot]
+          echo "$RESULT" | jq -r '
+            .data.repository.pullRequest.reviewThreads.nodes[]
+            | select(.isResolved == false)
+            | select((.comments.nodes | map(.author.login) | unique) == ["coderabbitai[bot]"])
+            | .id
+          ' | while read -r THREAD_ID; do
+            if [ -n "$THREAD_ID" ]; then
+              echo "Resolving bot-only thread: $THREAD_ID"
+              gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}' \
+                -f id="$THREAD_ID" 2>/dev/null || true
+            fi
+          done
+
+          echo "Auto-resolve complete for PR #$PR_NUMBER"

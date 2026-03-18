@@ -1,0 +1,77 @@
+name: coderabbit-rerun
+
+on:
+  workflow_run:
+    workflows: [risk-policy-gate]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  coderabbit-rerun:
+    name: coderabbit-rerun
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download risk policy artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          name: risk-policy-report
+          path: artifacts
+
+      - name: Parse rerun decision
+        id: parse
+        run: |
+          REPORT="artifacts/risk-policy-report.json"
+          test -f "$REPORT"
+
+          decision=$(jq -r '.decision' "$REPORT")
+          pr_number=$(jq -r '.pr_number' "$REPORT")
+          head_sha=$(jq -r '.head_sha' "$REPORT")
+          enforce_review=$(jq -r '.rollout.enforceReviewState // false' "$REPORT")
+          marker=$(jq -r '.rerunPolicy.marker // empty' harness/contract.json)
+
+          if [ -z "$marker" ] || [ "$marker" = "null" ]; then
+            marker="<!-- coderabbit-auto-rerun -->"
+          fi
+
+          should_request="false"
+          if [ "$enforce_review" = "true" ] && { [ "$decision" = "stale-review" ] || [ "$decision" = "timeout" ]; }; then
+            should_request="true"
+          fi
+
+          echo "decision=$decision" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "marker=$marker" >> "$GITHUB_OUTPUT"
+          echo "should_request=$should_request" >> "$GITHUB_OUTPUT"
+
+      - name: Request rerun once per SHA
+        if: ${{ steps.parse.outputs.should_request == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/harness/rerun_comment_dedupe.py \
+            --repo "${{ github.repository }}" \
+            --pr-number "${{ steps.parse.outputs.pr_number }}" \
+            --head-sha "${{ steps.parse.outputs.head_sha }}" \
+            --marker "${{ steps.parse.outputs.marker }}" \
+            --message "@coderabbitai full review" \
+            --out artifacts/rerun-comment-result.json
+
+      - name: Upload rerun artifact
+        if: ${{ steps.parse.outputs.should_request == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coderabbit-rerun-result
+          path: artifacts/rerun-comment-result.json
+          if-no-files-found: error
