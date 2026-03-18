@@ -1,0 +1,84 @@
+name: claude-agent
+
+on:
+  issues:
+    types: [labeled, assigned]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  claude-agent:
+    if: >-
+      ${{
+        github.event.label.name == 'agent:claude' ||
+        (github.event.action == 'assigned' && github.event.assignee.login == 'claude')
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create agent branch
+        id: branch
+        run: |
+          BRANCH="claude/issue-${{ github.event.issue.number }}"
+          git checkout -b "$BRANCH"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          max-turns: 20
+          prompt: |
+            Read AGENTS.md for project context and build commands.
+
+            Fix issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
+
+            ${{ github.event.issue.body }}
+
+            When done, verify your changes:
+            1. mix compile --warnings-as-errors
+            2. mix test
+            3. mix credo --strict
+            4. mix format --check-formatted
+
+      - name: Push changes and open PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.branch.outputs.branch }}"
+          git config user.name "claude[bot]"
+          git config user.email "claude[bot]@users.noreply.github.com"
+
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "fix: resolve issue #${{ github.event.issue.number }}
+
+          ${{ github.event.issue.title }}
+
+          Co-Authored-By: Claude <claude[bot]@users.noreply.github.com>"
+
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "fix: ${{ github.event.issue.title }}" \
+            --body "Resolves #${{ github.event.issue.number }}
+
+          ## Summary
+          Automated fix by Claude agent.
+
+          ## Verification
+          - [ ] \`mix compile --warnings-as-errors\` passes
+          - [ ] \`mix test\` passes
+          - [ ] \`mix credo --strict\` passes
+          - [ ] \`mix format --check-formatted\` passes" \
+            --label "agent-pr" \
+            --head "$BRANCH"
