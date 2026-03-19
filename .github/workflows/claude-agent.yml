@@ -78,17 +78,34 @@ jobs:
 
           git push origin "$BRANCH"
 
+          # Extract Linear issue tag from title (e.g. [GET-42])
+          LINEAR_TAG=$(echo "${{ github.event.issue.title }}" | grep -oE '\[GET-[0-9]+\]' || true)
+          LINEAR_LINK=""
+          if [ -n "$LINEAR_TAG" ]; then
+            LINEAR_LINK="Linear: ${LINEAR_TAG}"
+          fi
+
           gh pr create \
             --title "fix: ${{ github.event.issue.title }}" \
             --body "Resolves #${{ github.event.issue.number }}
 
           ## Summary
-          Automated fix by Claude agent.
+          Automated fix by Claude agent for: ${{ github.event.issue.title }}
 
-          ## Verification
-          - [ ] \`mix compile --warnings-as-errors\` passes
-          - [ ] \`mix test\` passes
-          - [ ] \`mix credo --strict\` passes
-          - [ ] \`mix format --check-formatted\` passes" \
+          ## Linear Issue
+          ${LINEAR_LINK:-_No Linear issue linked._}
+
+          ## Acceptance Criteria
+          _Populated automatically by \`pr-review-harness\` after CI runs._
+          - [ ] Risk policy gate passed
+          - [ ] CodeRabbit review clean
+          - [ ] CI pipeline passed
+          - [ ] Browser evidence verified (if UI change)
+
+          ## Validation Artifacts
+          _Populated automatically by \`pr-review-harness\` workflow._
+
+          ## Execution Evidence
+          _Screenshots, videos, and recordings attached by harness automation._" \
             --label "agent-pr" \
             --head "$BRANCH"
