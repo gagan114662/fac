@@ -20,10 +20,11 @@ defmodule FacWeb.Router do
     get "/", PageController, :home
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", FacWeb do
-  #   pipe_through :api
-  # end
+  scope "/api", FacWeb do
+    pipe_through :api
+
+    get "/health", HealthController, :index
+  end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:fac, :dev_routes) do
